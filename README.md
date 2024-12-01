@@ -1,46 +1,51 @@
-## Project structure
+# GenAI Web scraping and KB Creation Tool
 
-project_root/
-├── app/
-│   ├── api/
+```tree
+root
+├── app                 <- Main application directory containing core functionality.
+│   │
+│   ├── db             <- Database configuration and session management
 │   │   ├── __init__.py
-│   │   ├── file_api.py
-│   │   └── crawler_api.py             # The crawler-api artifact
-│   ├── db/
+│   │   ├── base.py          <- SQLAlchemy base class and model registry
+│   │   └── session.py       <- Database connection and session handling
+│   │
+│   ├── models         <- SQLAlchemy models defining database schema
 │   │   ├── __init__.py
-│   │   ├── base.py                    # The database-base artifact
-│   │   └── session.py                 # The database-session artifact
-│   ├── models/
+│   │   ├── file.py          <- File storage and tracking models
+│   │   └── scraped_page.py  <- Web page content and metadata models
+│   │
+│   ├── schemas        <- Pydantic models for data validation
 │   │   ├── __init__.py
-│   │   ├── file.py
-│   │   └── scraped_page.py            # The crawler-model artifact
-│   ├── schemas/
+│   │   ├── file.py          <- File metadata schemas
+│   │   └── crawler.py       <- Crawler data validation schemas
+│   │
+│   ├── scrapy_crawler <- Scrapy-based web crawler implementation
 │   │   ├── __init__.py
-│   │   ├── file.py
-│   │   └── crawler.py                 # The crawler-schemas artifact
-│   ├── scrapy_crawler/
-│   │   ├── __init__.py
-│   │   ├── spiders/
+│   │   ├── spiders
 │   │   │   ├── __init__.py
-│   │   │   └── web_crawler.py         # The scrapy-spider artifact
-│   │   ├── config_manager.py          # The crawler-config-manager artifact
-│   │   ├── middlewares.py             # The scrapy-middleware artifact
-│   │   ├── pipelines.py               # The scrapy-pipeline artifact
-│   │   └── settings.py                # The scrapy-settings artifact
-│   ├── services/
-│   │   ├── __init__.py
-│   │   ├── file.py
-│   │   ├── crawler_service.py         # The crawler-service artifact
-│   │   └── job_service.py             # The crawler-job-service artifact
-│   └── main.py
-├── config/
+│   │   │   └── web_crawler.py    <- Main crawler spider implementation
+│   │   ├── config_manager.py     <- Crawler configuration management
+│   │   ├── middlewares.py        <- Request/response processing middleware
+│   │   ├── pipelines.py          <- Content processing pipeline
+│   │   └── settings.py           <- Scrapy-specific settings
+├── config             <- Configuration management
 │   ├── __init__.py
-│   ├── settings.py
-│   └── agent_config.py
-├── dependencies/
+│   ├── settings.py         <- Web scraper settings
+│   └── log_config.py     <- log configuration
+│
+├── dependencies       <- Environment and dependency management
+│   └── requirements.txt
+│   └── ste-genai-web-scraping-kb.yaml
+│
+├── scripts           <- Utility and maintenance scripts
 │   └── __init__.py
-├── scripts/
-│   └── __init__.py
-└── util/
-    ├── __init__.py
-    └── s3_helper.py                   # The enhanced-s3-helper artifact
+│   └── main.py       <- Main script to run the web scraper
+│
+├── util              <- Utility functions and helpers
+│   ├── __init__.py
+│   └── s3_helper.py  <- S3/MinIO storage helper functions
+│
+├── .env              <- Environment variables (ignored by git)
+├── .gitignore        <- Files and directories to be ignored by git
+└── README.md         <- Project documentation and setup instructions
+```
