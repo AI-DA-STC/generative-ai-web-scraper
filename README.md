@@ -1,5 +1,6 @@
 # GenAI Web scraping and KB Creation Tool
 
+### Repo folder structure 
 ```tree
 root
 ├── app                 <- Main application directory containing core functionality.
@@ -48,4 +49,32 @@ root
 ├── .env              <- Environment variables (ignored by git)
 ├── .gitignore        <- Files and directories to be ignored by git
 └── README.md         <- Project documentation and setup instructions
+```
+
+### MinIO storage structure
+
+```tree
+bucket_name/
+├── {timestamp}/
+│   ├── html/
+│   │   ├── {id1}_content.html
+│   │   ├── {id2}_content.html
+│   │   └── ...
+│   ├── images/
+│   │   ├── {id1}/
+│   │   ├── {id2}/
+│   │   └── ...
+│   ├── pdfs/
+│   │   ├── {id1}/
+│   │   ├── {id2}/
+│   │   └── ...
+│   └── tables/
+│       ├── {id1}/
+│       ├── {id2}/
+│       └── ...
+└── {timestamp}_prod/
+    ├── html/
+    ├── images/
+    ├── pdfs/
+    └── tables/
 ```

@@ -4,13 +4,14 @@ from io import BytesIO
 from typing import Dict, Any, List
 import fitz  # PyMuPDF
 
+from datetime import datetime
 import sys
 import pyprojroot
 root = pyprojroot.find_root(pyprojroot.has_dir("config"))
 sys.path.append(str(root))
 
 from app.db.session import SessionLocal
-from app.models.scraper import ScrapedPage
+from app.db.base import get_model_for_timestamp
 from app.schemas.scraper import ScrapedMetadata, EmbeddedPDF, EmbeddedImage, EmbeddedTable
 from util.s3_helper import S3Helper
 from config import settings, logger
@@ -21,10 +22,15 @@ class ContentPipeline:
     def __init__(self):
         """Initialize pipeline with storage client."""
         self.session = None
-    
+        self.table_name = None
+        self.base_path = None
+        
     def open_spider(self, spider):
         """Create requests session when spider opens."""
         self.session = requests.Session()
+        self.table_name = spider.table_name
+        self.ScrapedPage = spider.model
+        self.base_path = f"{self.table_name}"
     
     def close_spider(self, spider):
         """Clean up session when spider closes."""
@@ -37,7 +43,7 @@ class ContentPipeline:
             db = SessionLocal()
             
             # Store raw HTML
-            html_path = f"{item['id']}/content.html"
+            html_path = f"{self.base_path}/html/{item['id']}_content.html"
             self._store_html_content(item['raw_html'], html_path)
             item['html_content'] = html_path
             
@@ -50,7 +56,7 @@ class ContentPipeline:
             metadata = ScrapedMetadata(**item)
             
             # Store in database
-            db_page = ScrapedPage(
+            db_page = self.ScrapedPage(
                 id=metadata.id,
                 url=metadata.url,
                 title=metadata.title,
@@ -110,7 +116,7 @@ class ContentPipeline:
                     pdf['pdf_size'] = len(content)
                     
                     # Store in MinIO
-                    path = f"{item['id']}/pdfs/{pdf['id']}.pdf"
+                    path = f"{self.base_path}/pdfs/{item['id']}/{pdf['id']}.pdf"
                     content_stream = BytesIO(content)
                     S3Helper().upload_file(
                         file_obj=content_stream,
@@ -139,7 +145,7 @@ class ContentPipeline:
                     img['checksum'] = hashlib.sha256(content).hexdigest()
                     img['size'] = len(content)
                     
-                    path = f"{item['id']}/images/{img['id']}{self._get_extension(img['url'])}"
+                    path = f"{self.base_path}/images/{item['id']}/{img['id']}{self._get_extension(img['url'])}"
                     content_stream = BytesIO(content)
                     S3Helper().upload_file(
                         file_obj=content_stream,
@@ -161,7 +167,7 @@ class ContentPipeline:
         processed_tables = []
         for table in item['tables']:
             try:
-                path = f"{item['id']}/tables/{table['id']}.html"
+                path = f"{self.base_path}/tables/{item['id']}/{table['id']}.html"
                 content_stream = BytesIO(table['content'].encode('utf-8'))
                 S3Helper().upload_file(
                     file_obj=content_stream,

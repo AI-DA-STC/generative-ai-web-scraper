@@ -9,6 +9,7 @@ conf/**/*credentials*
 logs/**
 models/**
 storage
+**/data/*
 
 # Except their sub-folders
 !logs/**/

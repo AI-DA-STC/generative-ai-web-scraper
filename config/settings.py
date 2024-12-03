@@ -3,6 +3,9 @@ from pathlib import Path
 import pyprojroot
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from datetime import time
+from typing import List
+
 class PathInfo:
     """
     Base information class that defines core paths and environment settings.
@@ -36,7 +39,6 @@ class Settings(BaseSettings, PathInfo):
     AWS_BUCKET_NAME: str     # Target bucket name
 
     # Crawler specific settings
-    MAX_CRAWL_DEPTH: int = 6
     CONCURRENT_REQUESTS: int = 16
     DOWNLOAD_DELAY: int = 1.0
     RESPECT_ROBOTS_TXT: bool = True

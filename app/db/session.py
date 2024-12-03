@@ -7,7 +7,7 @@ import pyprojroot
 root = pyprojroot.find_root(pyprojroot.has_dir("config"))
 sys.path.append(str(root))
 
-from app.db.base import Base,import_all_models
+from app.db.base import get_model_for_timestamp
 from config import settings,logger
 
 # Create database engine with connection pooling
@@ -37,7 +37,7 @@ def get_db() -> Session:
         db.close()
         raise
 
-def init_db() -> None:
+def init_db(timestamp: str) -> None:
     """
     Initialize the database system by creating the database if it doesn't exist
     and ensuring all tables are properly created.
@@ -57,27 +57,29 @@ def init_db() -> None:
             logger.info(f"Database does not exist. Creating database...")
             create_database(settings.DATABASE_URL)
             logger.info(f"Database created successfully")
-        # Import models
-        import_all_models()
-        logger.info("created model schemas")
-        
-        # Create tables
+
+        # Check for existing tables with 'prod_' prefix
         inspector = inspect(engine)
         existing_tables = inspector.get_table_names()
-        logger.info("created tables from model schemas")
+        logger.info(f"Found ({len(existing_tables)}) tables :\n{existing_tables}")
+        has_prod_tables = any(table.startswith('prod_') for table in existing_tables)
         
-        # Get all models that inherit from Base
-        models = Base.metadata.tables.keys()
+        # Create new versioned table if a production table is already present
+        table_name = f"prod_{timestamp}" if not has_prod_tables else timestamp
+
+        model = get_model_for_timestamp(table_name)
+        logger.info(f"created model schemas for tablename {model.__tablename__}")
         
-        # Create only missing tables
-        for table_name in models:
-            if table_name not in existing_tables:
-                logger.info(f"Creating table: {table_name}")
-                Base.metadata.tables[table_name].create(bind=engine)
-            else:
-                logger.info(f"Table already exists: {table_name}")
+        # Create table if it doesn't exist
+        if not inspector.has_table(model.__tablename__):
+            model.__table__.create(bind=engine)
+            logger.info(f"Created new table: {model.__tablename__}")
+            if not has_prod_tables:
+                logger.info("This is the first production table in the database")
+        else:
+            logger.info(f"Table already exists: {model.__tablename__}")
         
-        logger.info("Database initialization completed successfully")
+        return table_name,model
         
     except Exception as e:
         logger.error(f"Error during database initialization: {str(e)}")

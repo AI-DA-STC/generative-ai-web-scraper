@@ -7,6 +7,7 @@ sys.path.append(str(root))
 
 import click
 import logging
+from datetime import datetime
 
 from app.db.session import init_db
 from app.scrapy_crawler.config_manager import get_crawler_config
@@ -41,7 +42,8 @@ def initialize_system():
     try:
         # Initialize database
         logger.info("Initializing SQL database...")
-        init_db()
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        table_name,model = init_db(timestamp)
         
         # Verify MinIO connection
         logger.info("Verifying MinIO connection...")
@@ -51,18 +53,17 @@ def initialize_system():
         # Create required directories
         create_required_directories()
         
-        return True
+        return table_name, model
         
     except Exception as e:
         logger.error(f"Initialization failed: {str(e)}")
-        return False
+        sys.exit(1)
 
 @click.command()
 @click.argument('urls', nargs=-1, required=True)
 @click.option('--depth', '-d', default=6, help='Maximum crawl depth (default: 6)')
 @click.option('--follow/--no-follow', default=True, help='Whether to follow links (default: True)')
-@click.option('--verbose', '-v', is_flag=True, help='Enable verbose logging')
-def main(urls: tuple, depth: int, follow: bool, verbose: bool):
+def main(urls: tuple, depth: int, follow: bool, verbose: bool=True):
     """
     Web crawler script that processes URLs and stores content and metadata.
     
@@ -78,16 +79,16 @@ def main(urls: tuple, depth: int, follow: bool, verbose: bool):
     
     # Initialize system
     logger.info("Starting crawler system...")
-    if not initialize_system():
-        sys.exit(1)
-    
+    table_name, model = initialize_system()
+
     try:
         # Get crawler configuration
         crawler_config = get_crawler_config()
         settings = crawler_config.get_integrated_settings()
-        
         # Create spider instance
         spider = WebCrawlerSpider(
+            table_name = table_name,
+            model = model,
             start_urls=list(urls),
             max_depth=depth,
             follow_links=follow
