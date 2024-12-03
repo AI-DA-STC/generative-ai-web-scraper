@@ -14,6 +14,8 @@ class WebCrawlerSpider(CrawlSpider):
     
     def __init__(
         self,
+        table_name: str,
+        model: Any,
         start_urls: List[str],
         max_depth: int = 2,
         follow_links: bool = True,
@@ -24,7 +26,9 @@ class WebCrawlerSpider(CrawlSpider):
         self.start_urls = start_urls
         self.max_depth = max_depth
         self.follow_links = follow_links
-        
+        self.table_name = table_name
+        self.model = model
+
         # Define crawling rules
         rules = []
         if follow_links:
@@ -182,7 +186,9 @@ class WebCrawlerSpider(CrawlSpider):
             self.__class__,
             start_urls=self.start_urls,
             max_depth=self.max_depth,
-            follow_links=self.follow_links
+            follow_links=self.follow_links,
+            table_name=self.table_name,
+            model = self.model
         )
         
         # Run the process

@@ -1,5 +1,4 @@
 Scrapy
-dvc
 llama-parse
 sqlalchemy_utils
 pyprojroot
@@ -7,7 +6,6 @@ pydantic
 pydantic-settings
 psycopg2-binary
 boto3
-aioboto3
 PyMuPDF
 bs4
 click

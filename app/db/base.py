@@ -2,21 +2,28 @@ from sqlalchemy.ext.declarative import declarative_base
 
 Base = declarative_base()
 
+from typing import Type
+
 import sys
 import pyprojroot
 root = pyprojroot.find_root(pyprojroot.has_dir("config"))
 sys.path.append(str(root))
 
-def import_all_models() -> None:
+from config import logger
+
+def get_model_for_timestamp(timestamp: str) -> Type:
     """
-    Imports all SQLAlchemy models to ensure they're registered with Base.
+    Get or create a SQLAlchemy model class for a given timestamp.
     
-    This function is crucial for SQLAlchemy's metadata management and should be called
-    when initializing the application to ensure all models are properly registered
-    before creating database tables.
-    
-    Note: Import statements are inside the function to avoid circular imports, as models
-    themselves import Base from this module.
+    Args:
+        timestamp: Timestamp string for table naming
+        
+    Returns:
+        SQLAlchemy model class configured for the timestamp
     """
-    # Import models here to avoid circular imports
-    from app.models.scraper import ScrapedPage  # Model for scraped content
+    from app.models.scraper import create_scrapedpage_model
+    
+    # Create model with timestamp-based table name
+    model = create_scrapedpage_model(timestamp)
+        
+    return model
