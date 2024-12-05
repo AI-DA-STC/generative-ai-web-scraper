@@ -1,12 +1,12 @@
 from sqlalchemy import inspect, text
-from typing import Dict, List
-
-from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy_utils import database_exists, create_database
+from typing import Dict, List, Tuple, Optional
 
-from app.db.session import SessionLocal, engine
-from app.models.scraper import create_scrapedpage_model
-from config import settings,logger
+from app.db.session import get_db, engine
+from app.db.base import get_model
+from config import settings, logger
+from app.models import scraper, scraped_changes
 
 class SQLHelper:
     """
@@ -18,130 +18,197 @@ class SQLHelper:
     def __init__(self):
         self.engine = engine
         self.settings = settings
+        self.db = next(get_db())
         
-    def verify_connection(self) -> bool:
+    def init_db(self,timestamp: str):
         """
-        Verify database connection is active and working.
-        Returns True if connection is successful, raises exception otherwise.
+        Initialize the database system by creating the database if it doesn't exist
+        and ensuring all tables are properly created.
+        
+        This function performs several important steps:
+        1. Checks if the database exists, creates it if it doesn't
+        2. Checks if prod table already exists, creates it if it doesn't
+        3. Checks if dev table already exists, creates it if it doesn't
+        4. Imports all models to register them with SQLAlchemy
+        
         """
         try:
-            with self.engine.connect() as conn:
-                conn.execute(text("SELECT 1"))
-            return True
-        except SQLAlchemyError as e:
-            logger.error(f"Database connection failed: {str(e)}")
+            # Check database existence
+            if not database_exists(settings.DATABASE_URL):
+                logger.info(f"Database does not exist. Creating database...")
+                create_database(settings.DATABASE_URL)
+                logger.info(f"Database created successfully")
+
+            # Check for existing tables with 'prod_' prefix
+            inspector = inspect(engine)
+            existing_tables = inspector.get_table_names()
+            logger.info(f"Found ({len(existing_tables)}) tables :\n{existing_tables}")
+            has_prod_tables = any(table.startswith('prod_') for table in existing_tables)
+            
+            # Create new versioned table if a production table is already present
+            table_name = f"prod_{timestamp}" if not has_prod_tables else f"dev_{timestamp}"
+
+            #Create model for desired table name
+            model = get_model(table_name)
+            
+            # Create table if it doesn't exist
+            if not inspector.has_table(model.__tablename__):
+                model.__table__.create(bind=engine)
+                logger.info(f"Created new table: {model.__tablename__}")
+                if not has_prod_tables:
+                    logger.info("This is the first production table in the database")
+            else:
+                logger.info(f"Table already exists: {model.__tablename__}")
+            
+            return table_name, model
+            
+        except Exception as e:
+            logger.error(f"Error during database initialization: {str(e)}")
             raise
 
-    def create_version_table(self, timestamp: str) -> str:
+
+    def cleanup_tables(self,prod_table, keep_versions: int = 5) -> None:
         """
-        Creates a new versioned table for storing scraped data.
-        Naming convention: scraped_pages_{timestamp}
+        Clean up database tables by renaming current prod table and removing old versions.
         
-        Used for storing new scraping results before they are approved for production.
+        Args:
+            keep_versions: Number of most recent versions to keep
         """
         try:
-            table_name = f"scraped_pages_{timestamp}"
-            model = create_scrapedpage_model(table_name)
-            
-            # Create new table with timestamp
-            if not inspect(self.engine).has_table(table_name):
-                model.__table__.create(self.engine)
-                logger.info(f"Created versioned table: {table_name}")
-            
-            return table_name
-            
+            with self.db:
+                inspector = inspect(engine)
+                all_tables = inspector.get_table_names()
+
+                # Rename prod table by removing 'prod_' prefix
+                new_table_name = prod_table.replace('prod_', '', 1)
+                self.db.execute(text(f"ALTER TABLE {prod_table} RENAME TO {new_table_name}"))
+                logger.info(f"Renamed {prod_table} to {new_table_name}")
+                
+                # Get all dev tables (excluding prod prefix and changes table)
+                dev_tables = [t for t in all_tables if t.startswith('dev_')]
+                
+                # Sort tables by timestamp (newest first)
+                dev_tables.sort(reverse=True)
+                
+                # Keep N most recent dev tables, remove the rest
+                if len(dev_tables) > keep_versions:
+                    tables_to_remove = dev_tables[keep_versions:]
+                    for table in tables_to_remove:
+                        self.db.execute(text(f"DROP TABLE IF EXISTS {table}"))
+                        logger.info(f"Dropped old dev table: {table}")
+                
+                    self.db.commit()
+                    logger.info(f"Cleanup Complete. Kept {min(keep_versions, len(dev_tables))} most recent dev tables") 
+                else:
+                    logger.info(f"Cleanup Skipped. Kept all {len(dev_tables)} dev tables")  
+                    
         except SQLAlchemyError as e:
-            logger.error(f"Failed to create version table: {str(e)}")
+            logger.error(f"Error during table cleanup: {str(e)}")
+            self.db.rollback()
             raise
 
-    def create_prod_table(self, timestamp: str) -> str:
+    def _get_table_info(self) -> Tuple[Optional[str], Optional[str]]:
         """
-        Creates or updates the production table with timestamp suffix.
-        Naming convention: scraped_pages_{timestamp}_prod
+        Get prod and dev table names if they exist.
+        Returns tuple of (prod_table, dev_table) or (None, None).
+        """
+        inspector = inspect(engine)
+        all_tables = inspector.get_table_names()
         
-        Production table contains the approved and active dataset.
-        """
+        prod_tables = [t for t in all_tables if t.startswith('prod_')]
+        dev_tables = [t for t in all_tables if t.startswith('dev_')]
+        
+        if not dev_tables:
+            return None, None
+            
+        prod_table = prod_tables[0]  # Get most recent prod table
+        dev_table = dev_tables[0] if dev_tables else None
+        
+        return prod_table, dev_table
+
+    def convert_dev_to_prod_table(self,dev_table) -> None:
+        """Update production table with new data."""
         try:
-            prod_table = f"prod_{timestamp}"
-            model = create_scrapedpage_model(prod_table)
-            
-            # Create prod table if it doesn't exist
-            if not inspect(self.engine).has_table(prod_table):
-                model.__table__.create(self.engine)
-                logger.info(f"Created production table: {prod_table}")
-            
-            return prod_table
-            
+                
+            with self.db:
+                # Extract timestamp from dev table
+                timestamp = dev_table.split('_')[1]  
+                
+                # Create new prod table
+                new_prod_table = f"prod_{timestamp}"
+                
+                # Copy data from dev to new prod
+                self.db.execute(
+                    text(f"""
+                        CREATE TABLE {new_prod_table} 
+                        AS TABLE {dev_table}
+                    """)
+                )
+                
+                self.db.commit()
+                logger.info(f"Successfully created new production table: {new_prod_table}")
+                
         except SQLAlchemyError as e:
-            logger.error(f"Failed to create production table: {str(e)}")
+            logger.error(f"Failed to update production table: {str(e)}")
+            self.db.rollback()
             raise
 
-    def compare_table_changes(
-        self, 
-        timestamp: str
-    ) -> Dict[str, List[Dict]]:
-        """
-        Compares newly scraped data with production data to identify changes.
-        
-        Performs detailed comparison of content and metadata to identify:
-        - New pages added
-        - Existing pages modified
-        - Pages removed
-        Returns a dictionary with categorized changes.
-        """
+    def update_tables(self) -> Dict[str, List[str]]:
+        """Compare changes between prod and dev tables."""
         try:
-            # Get list of all tables
-            inspector = inspect(self.engine)
-            all_tables = inspector.get_table_names()
+            prod_table, dev_table = self._get_table_info()
             
-            # Find production table if it exists
-            prod_table = [table for table in all_tables if table.startswith('prod_')][0]
-            
-            if not prod_table:
-                logger.info("No production table found. Skipping comparison.")
+            if not dev_table:
+                logger.info("No dev table found. Skipping comparison.")
                 return {
+                    'deleted': [],
                     'added': [],
-                    'modified': [],
-                    'deleted': []
+                    'modified': []
                 }
             
-            # Use the existing production table for comparison
-            version_table = f"{timestamp}"
-            
-            with SessionLocal() as db:
-                # Get models for both tables
-                VersionModel = create_scrapedpage_model(version_table)
-                ProdModel = create_scrapedpage_model(prod_table)
+            with self.db:
+                # Get models
+                DevModel = scraper.create_scrapedpage_model(dev_table)
+                ProdModel = scraper.create_scrapedpage_model(prod_table)
                 
-                # Fetch all pages from both tables
-                new_pages = {page.url: page for page in db.query(VersionModel).all()}
-                prod_pages = {page.url: page for page in db.query(ProdModel).all()}
+                # Fetch all records
+                dev_pages = {page.element_id: page for page in self.db.query(DevModel).all()}
+                prod_pages = {page.element_id: page for page in self.db.query(ProdModel).all()}
                 
-                # Initialize change tracking
+                # Track changes
                 changes = {
+                    'deleted': [],
                     'added': [],
-                    'modified': [],
-                    'deleted': []
+                    'modified': []
                 }
                 
-                # Find added and modified pages
-                for url, new_page in new_pages.items():
-                    if url not in prod_pages:
-                        # New page
-                        changes['added'].append(new_page.to_dict())
-                    else:
-                        # Check for modifications
-                        prod_page = prod_pages[url]
-                        if self._detect_content_changes(new_page, prod_page):
-                            changes['modified'].append({
-                                'url': url,
-                                'changes': self._get_change_details(new_page, prod_page)
-                            })
+                # Find added and modified
+                for element_id, dev_page in dev_pages.items():
+                    if element_id not in prod_pages:
+                        changes['added'].append(element_id)
+                    elif dev_page.checksum != prod_pages[element_id].checksum:
+                        changes['modified'].append(element_id)
                 
-                # Find deleted pages
-                for url in prod_pages:
-                    if url not in new_pages:
-                        changes['deleted'].append({'url': url})
+                # Find deleted
+                for element_id in prod_pages:
+                    if element_id not in dev_pages:
+                        changes['deleted'].append(element_id)
+                
+                # Store changes to separate table
+                ChangesModel = scraped_changes.ScrapedChanges
+                
+                db_changes = ChangesModel(
+                    deleted=changes['deleted'],
+                    added=changes['added'],
+                    modified=changes['modified']
+                )
+                
+                self.db.add(db_changes)
+                self.db.commit()
+
+                #Convert dev table to prod table
+                self.convert_dev_to_prod_table(dev_table)
+                self.cleanup_tables(prod_table)
                 
                 return changes
                 
@@ -149,181 +216,4 @@ class SQLHelper:
             logger.error(f"Error comparing tables: {str(e)}")
             raise
 
-    def update_prod_table(self, timestamp: str) -> None:
-        """
-        Updates production table with new data after approval.
-        
-        Process:
-        1. Creates backup of current production data
-        2. Updates production table with new version
-        3. Maintains data integrity with transaction handling
-        """
-        try:
-            version_table = f"{timestamp}"
 
-            # Get list of all tables
-            inspector = inspect(self.engine)
-            all_tables = inspector.get_table_names()
-            
-            # Find production table if it exists
-            prod_table = [table for table in all_tables if table.startswith('prod_')][0]
-            
-            with SessionLocal() as db:
-                
-                # Create new prod table
-                self.create_prod_table(timestamp)
-                
-                # Copy approved data to production
-                db.execute(
-                    text(f"""
-                        INSERT INTO {prod_table} 
-                        SELECT * FROM {version_table}
-                    """)
-                )
-                
-                db.commit()
-                logger.info(f"Successfully updated production table")
-            
-        except SQLAlchemyError as e:
-            logger.error(f"Failed to update production table: {str(e)}")
-            db.rollback()
-            raise
-
-    def cleanup_old_versions(self, keep_versions: int = 5) -> None:
-        """
-        Cleans up old database tables while maintaining history.
-        
-        Handles two types of tables:
-        1. Production tables (prefix 'prod_'): Keeps only the latest version
-        2. Version tables: Keeps the specified number of recent versions
-        
-        Args:
-            keep_versions: Number of version tables to retain
-        """
-        try:
-            inspector = inspect(self.engine)
-            all_tables = inspector.get_table_names()
-            
-            # Handle production tables - keep only latest
-            prod_tables = [t for t in all_tables if t.startswith('prod_')]
-            if prod_tables:
-                # Sort by timestamp in table name (newest first)
-                prod_tables.sort(reverse=True)
-                # Remove all but the latest prod table
-                for table in prod_tables[1:]:
-                    self.engine.execute(text(f"DROP TABLE IF EXISTS {table}"))
-                    logger.info(f"Removed old production table: {table}")
-            
-            # Handle version tables
-            version_tables = [
-                t for t in all_tables 
-                if not t.startswith('prod_')
-            ]
-            
-            # Sort by timestamp (newest first)
-            version_tables.sort(reverse=True)
-            
-            # Remove excess version tables
-            if len(version_tables) > keep_versions:
-                tables_to_remove = version_tables[keep_versions:]
-                for table in tables_to_remove:
-                    self.engine.execute(text(f"DROP TABLE IF EXISTS {table}"))
-                    logger.info(f"Removed old version table: {table}")
-                    
-            logger.info(f"Cleanup completed. Retained latest prod table : {prod_tables[0]}")
-            
-        except SQLAlchemyError as e:
-            logger.error(f"Error cleaning up old versions: {str(e)}")
-            raise
-
-    def _detect_content_changes(self, new_page: object, prod_page: object) -> bool:
-        """
-        Checks for meaningful changes between page versions.
-        
-        Compares:
-        - HTML content checksum
-        - Resource counts (PDFs, images, tables)
-        - Content length and structure
-        """
-        return any([
-            new_page.html_checksum != prod_page.html_checksum,
-            new_page.pdf_count != prod_page.pdf_count,
-            new_page.image_count != prod_page.image_count,
-            new_page.table_count != prod_page.table_count,
-            abs(new_page.word_count - prod_page.word_count) > self.settings.MIN_CONTENT_CHANGE_THRESHOLD
-        ])
-
-    def _create_backup(self, db: Session, source: str, backup: str) -> None:
-        """
-        Creates a backup copy of a table before making changes.
-        
-        Ensures data safety by maintaining a backup copy before
-        any significant changes to production data.
-        """
-        try:
-            # Create backup table with same structure
-            db.execute(text(f"CREATE TABLE {backup} (LIKE {source} INCLUDING ALL)"))
-            
-            # Copy data
-            db.execute(text(f"INSERT INTO {backup} SELECT * FROM {source}"))
-            db.commit()
-            
-            logger.info(f"Created backup table: {backup}")
-            
-        except SQLAlchemyError as e:
-            logger.error(f"Backup creation failed: {str(e)}")
-            db.rollback()
-            raise
-
-    def _get_change_details(self, new_page: object, prod_page: object) -> Dict:
-        """
-        Generates detailed change report between page versions.
-        
-        Identifies specific changes in:
-        - Metadata (title, description)
-        - Content statistics
-        - Embedded resources
-        """
-        changes = {}
-        
-        # Check basic attributes
-        for attr in ['title', 'meta_description', 'word_count', 'pdf_count', 
-                    'image_count', 'table_count', 'link_count']:
-            new_val = getattr(new_page, attr)
-            prod_val = getattr(prod_page, attr)
-            if new_val != prod_val:
-                changes[attr] = {
-                    'old': prod_val,
-                    'new': new_val,
-                    'change_pct': self._calculate_change_pct(prod_val, new_val)
-                }
-        
-        # Compare embedded resources
-        for resource_type in ['embedded_pdfs', 'embedded_images', 'tables']:
-            self._compare_resources(
-                changes,
-                getattr(new_page, resource_type),
-                getattr(prod_page, resource_type),
-                resource_type
-            )
-        
-        return changes
-
-    def _table_exists(self, table_name: str) -> bool:
-        """
-        Checks if a table exists in the database.
-        
-        Used for verification before table operations to prevent errors.
-        """
-        return inspect(self.engine).has_table(table_name)
-
-    @staticmethod
-    def _calculate_change_pct(old: int, new: int) -> float:
-        """
-        Calculates percentage change between values.
-        
-        Used for quantifying the magnitude of changes in content metrics.
-        """
-        if old == 0:
-            return 100.0 if new > 0 else 0.0
-        return ((new - old) / old) * 100

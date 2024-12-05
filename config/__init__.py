@@ -1,5 +1,5 @@
 from config.log_config import logging
-from config.settings import Settings
+from config.general_settings import Settings
 
 settings = Settings()
 
