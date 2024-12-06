@@ -3,146 +3,52 @@ import pyprojroot
 root = pyprojroot.find_root(pyprojroot.has_dir("config"))
 sys.path.append(str(root))
 
+from sqlalchemy import Column, String, UniqueConstraint
 from app.db.base import Base
 
-from sqlalchemy import Column, String, Integer, DateTime, JSON
-from sqlalchemy.sql import func
+class Scrapy(Base):
+    """
+    SQLAlchemy model for storing scraped content metadata.
+    Handles HTML pages, PDFs, and images with parent-child relationships.
+    """
+    __tablename__ = "scraped_metadata"
+    
+    element_id = Column(
+        String,
+        primary_key=True,
+        comment="checksum_URL + job_id"
+    )
 
-def create_scrapedpage_model(table_name: str):
-    class ScrapedPage(Base):
-        """
-        SQLAlchemy model for storing scraped webpage data.
-        Stores page content and metadata from crawler results.
-        """
-        __tablename__ = table_name
-        
-        id = Column(
-            String, 
-            primary_key=True,
-            comment="Unique identifier combining checksum and timestamp"
-        )
-        url = Column(
-            String, 
-            index=True, 
-            nullable=False,
-            comment="Source URL of the scraped page"
-        )
-        title = Column(
-            String, 
-            nullable=True,
-            comment="Page title"
-        )
-        meta_description = Column(
-            String, 
-            nullable=True,
-            comment="Meta description from page"
-        )
-        language = Column(
-            String, 
-            nullable=False,
-            comment="Page language"
-        )
-        last_scraped_timestamp = Column(
-            DateTime, 
-            nullable=False,
-            server_default=func.now(),
-            comment="When the page was scraped"
-        )
-        last_updated = Column(
-            DateTime, 
-            nullable=True,
-            comment="Page's last update time if available"
-        )
-        crawl_depth = Column(
-            Integer, 
-            nullable=False,
-            comment="Depth from seed URL"
-        )
-        
-        # Content storage references
-        html_content = Column(
-            String, 
-            nullable=False,
-            comment="MinIO URL to raw HTML"
-        )
-        html_checksum = Column(
-            String, 
-            nullable=False,
-            comment="SHA-256 hash of HTML content"
-        )
-        
-        # Content statistics
-        word_count = Column(
-            Integer, 
-            nullable=False, 
-            default=0,
-            comment="Number of words in content"
-        )
-        pdf_count = Column(
-            Integer, 
-            nullable=False, 
-            default=0,
-            comment="Number of embedded PDFs"
-        )
-        image_count = Column(
-            Integer, 
-            nullable=False, 
-            default=0,
-            comment="Number of embedded images"
-        )
-        table_count = Column(
-            Integer, 
-            nullable=False, 
-            default=0,
-            comment="Number of HTML tables"
-        )
-        link_count = Column(
-            Integer, 
-            nullable=False, 
-            default=0,
-            comment="Number of outgoing links"
-        )
-        
-        # Nested content storage (as JSON)
-        tables = Column(
-            JSON, 
-            nullable=False, 
-            default=list,
-            comment="List of table metadata and MinIO URLs"
-        )
-        embedded_pdfs = Column(
-            JSON, 
-            nullable=False, 
-            default=list,
-            comment="List of PDF metadata and MinIO URLs"
-        )
-        embedded_images = Column(
-            JSON, 
-            nullable=False, 
-            default=list,
-            comment="List of image metadata and MinIO URLs"
-        )
+    URL = Column(
+        String,
+        nullable=False,
+        comment="URL of HTML/PDF/Image"
+    )
 
-        def to_dict(self):
-            """Convert model instance to dictionary."""
-            return {
-                'id': self.id,
-                'url': self.url,
-                'title': self.title,
-                'meta_description': self.meta_description,
-                'language': self.language,
-                'last_scraped_timestamp': self.last_scraped_timestamp,
-                'last_updated': self.last_updated,
-                'crawl_depth': self.crawl_depth,
-                'html_content': self.html_content,
-                'html_checksum': self.html_checksum,
-                'word_count': self.word_count,
-                'pdf_count': self.pdf_count,
-                'image_count': self.image_count,
-                'table_count': self.table_count,
-                'link_count': self.link_count,
-                'tables': self.tables,
-                'embedded_pdfs': self.embedded_pdfs,
-                'embedded_images': self.embedded_images
-            }
-    return ScrapedPage
+    type = Column(
+        String,
+        nullable=False,
+        index=True,
+        comment="Content type (URL/PDF/Image)"
+    )
+    
+    content = Column(
+        String,
+        nullable=False,
+        comment="MinIO URL to raw content"
+    )
+    
+    checksum = Column(
+        String,
+        nullable=False,
+        comment="SHA-256 hash of content"
+    )
+    
+    parent_id = Column(
+        String,
+        nullable=True,
+        comment="Parent HTML URL (element_id) for PDFs/Images"
+    )
+
+
+    

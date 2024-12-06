@@ -1,12 +1,9 @@
 from scrapy.spiders import CrawlSpider, Rule
 from scrapy.linkextractors import LinkExtractor
 from scrapy.http import Request
-from datetime import datetime
 import hashlib
 from typing import Dict, Any, List
-import re
 from urllib.parse import urljoin
-from bs4 import BeautifulSoup
 
 class WebCrawlerSpider(CrawlSpider):
     """Spider for crawling websites and extracting content."""
@@ -14,8 +11,8 @@ class WebCrawlerSpider(CrawlSpider):
     
     def __init__(
         self,
-        table_name: str,
-        model: Any,
+        job_id: str,
+        db,
         start_urls: List[str],
         max_depth: int = 2,
         follow_links: bool = True,
@@ -26,8 +23,8 @@ class WebCrawlerSpider(CrawlSpider):
         self.start_urls = start_urls
         self.max_depth = max_depth
         self.follow_links = follow_links
-        self.table_name = table_name
-        self.model = model
+        self.job_id = job_id
+        self.db = db
 
         # Define crawling rules
         rules = []
@@ -59,138 +56,87 @@ class WebCrawlerSpider(CrawlSpider):
     
     def parse_page(self, response):
         """Parse a webpage and extract content and metadata."""
-        soup = BeautifulSoup(response.text, 'html.parser')
+
         html_content = response.text
         
-        # Generate unique ID
+        # Calculate checksum of HTML content
         html_checksum = hashlib.sha256(html_content.encode()).hexdigest()
-        timestamp = datetime.now().isoformat()
-        page_id = f"{html_checksum}_{timestamp}"
+        html_URL_checksum = hashlib.sha256(response.url.encode()).hexdigest()
         
-        # Extract content
-        tables = self._extract_tables(soup)
-        pdfs = self._extract_pdfs(response)
-        images = self._extract_images(response)
-        
-        # Count elements
-        word_count = len(re.findall(r'\w+', soup.get_text()))
-        link_count = len(soup.find_all('a', href=True))
-        
-        # Build metadata matching ScrapedMetadata schema
-        metadata = {
-            'id': page_id,
-            'url': response.url,
-            'title': soup.title.string if soup.title else '',
-            'meta_description': self._get_meta_description(soup),
-            'language': self._detect_language(soup),
-            'last_scraped_timestamp': datetime.now(),
-            'last_updated': self._get_last_updated(soup),
-            'crawl_depth': response.meta.get('depth', 0),
-            
-            'html_content': '',  # Set by pipeline after S3 upload
-            'html_checksum': html_checksum,
-            'word_count': word_count,
-            'pdf_count': len(pdfs),
-            'image_count': len(images),
-            'table_count': len(tables),
-            'link_count': link_count,
-            
-            'tables': tables,
-            'embedded_pdfs': pdfs,
-            'embedded_images': images,
+        # Create HTML page entry
+        yield {
+            'element_id': f"{html_URL_checksum}_{self.job_id}",
+            'URL': response.url,
+            'type': 'URL',
+            'content': '',  # Will be set by pipeline after S3 upload
+            'checksum': html_checksum,
+            'parent_id': None,
+            'raw_html': html_content  # For pipeline processing
         }
         
-        metadata['raw_html'] = html_content  # For pipeline processing
+        # Extract and yield PDFs
+        for pdf in self._extract_pdfs(response):
+            pdf_URL_checksum = hashlib.sha256(pdf['url'].encode()).hexdigest()
+            yield {
+                'element_id': f"{pdf_URL_checksum}_{self.job_id}",
+                'URL': pdf['url'],
+                'type': 'PDF',
+                'content': '',  # Will be set by pipeline
+                'checksum': '',  # Will be set by pipeline
+                'parent_id': response.url,
+                'raw_pdf': pdf  # For pipeline processing
+            }
         
-        yield metadata
-    
-    # Helper methods remain unchanged as they work with our schema
-    def _extract_tables(self, soup: BeautifulSoup) -> List[Dict]:
-        """Extract HTML tables matching EmbeddedTable schema."""
-        tables = []
-        for idx, table in enumerate(soup.find_all('table')):
-            tables.append({
-                'id': f'table_{idx}',
-                'content': str(table)
-            })
-        return tables
+        # Extract and yield images
+        for img in self._extract_images(response):
+            img_URL_checksum = hashlib.sha256(img['url'].encode()).hexdigest()
+            yield {
+                'element_id': f"{img_URL_checksum}_{self.job_id}",
+                'URL': img['url'],
+                'type': 'Image',
+                'content': '',  # Will be set by pipeline
+                'checksum': '',  # Will be set by pipeline
+                'parent_id': response.url,
+                'raw_image': img  # For pipeline processing
+            }
     
     def _extract_pdfs(self, response) -> List[Dict]:
-        """Extract PDF links matching EmbeddedPDF schema."""
+        """Extract PDF links."""
         pdfs = []
         pdf_links = response.css('a[href$=".pdf"]::attr(href)').getall()
         
-        for idx, pdf_link in enumerate(pdf_links):
+        for pdf_link in pdf_links:
             absolute_url = urljoin(response.url, pdf_link)
             pdfs.append({
-                'id': f'pdf_{idx}',
-                'url': absolute_url,
-                'pdf_content': '',
-                'pdf_title': pdf_link.split('/')[-1],
-                'pdf_size': 0,
-                'page_count': 0
+                'url': absolute_url
             })
         return pdfs
     
     def _extract_images(self, response) -> List[Dict]:
-        """Extract images matching EmbeddedImage schema."""
+        """Extract images."""
         images = []
-        for idx, img in enumerate(response.css('img')):
+        for img in response.css('img'):
             src = img.css('::attr(src)').get()
             if src:
                 absolute_url = urljoin(response.url, src)
-                caption = img.xpath('./following-sibling::figcaption/text()').get()
-                
                 images.append({
-                    'id': f'img_{idx}',
-                    'url': absolute_url,
-                    'image_content': '',
-                    'figure_caption': caption,
-                    'checksum': '',
-                    'size': 0
+                    'url': absolute_url
                 })
         return images
-    
-    def _get_meta_description(self, soup: BeautifulSoup) -> str:
-        """Extract meta description."""
-        meta = soup.find('meta', attrs={'name': 'description'})
-        return meta.get('content', '') if meta else ''
-    
-    def _detect_language(self, soup: BeautifulSoup) -> str:
-        """Detect page language."""
-        html_tag = soup.find('html')
-        return html_tag.get('lang', 'en') if html_tag else 'en'
-    
-    def _get_last_updated(self, soup: BeautifulSoup) -> datetime:
-        """Extract last updated date."""
-        meta = soup.find('meta', attrs={'name': 'last-modified'})
-        if meta and meta.get('content'):
-            try:
-                return datetime.fromisoformat(meta.get('content'))
-            except ValueError:
-                pass
-        return None
         
     def crawl(self, settings: Dict[str, Any]) -> List[Dict]:
-        """
-        Run the crawler with given settings.
-        Called by main.py to start the crawling process.
-        """
+        """Run the crawler with given settings."""
         from scrapy.crawler import CrawlerProcess
         
-        # Use CrawlerProcess instead of CrawlerRunner for simplified handling
         process = CrawlerProcess(settings)
         
-        # Add crawler
         process.crawl(
             self.__class__,
             start_urls=self.start_urls,
             max_depth=self.max_depth,
             follow_links=self.follow_links,
-            table_name=self.table_name,
-            model = self.model
+            job_id = self.job_id,
+            db = self.db
         )
         
-        # Run the process
         process.start()
-        

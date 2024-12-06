@@ -6,7 +6,7 @@ import sys
 import pyprojroot
 root = pyprojroot.find_root(pyprojroot.has_dir("config"))
 sys.path.append(str(root))
-from app.scrapy_crawler.crawler_settings import ScrapyConfig
+from config.crawler_settings import ScrapyConfig
 from config import settings
 
 class CrawlerConfigManager:
