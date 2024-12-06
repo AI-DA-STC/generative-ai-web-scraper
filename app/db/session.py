@@ -6,8 +6,7 @@ import pyprojroot
 root = pyprojroot.find_root(pyprojroot.has_dir("config"))
 sys.path.append(str(root))
 
-from app.db.base import get_model_for_timestamp
-from config import settings,logger
+from config import settings
 
 # Create database engine with connection pooling
 engine = create_engine(

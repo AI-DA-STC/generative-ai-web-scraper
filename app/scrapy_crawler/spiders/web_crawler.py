@@ -4,7 +4,6 @@ from scrapy.http import Request
 import hashlib
 from typing import Dict, Any, List
 from urllib.parse import urljoin
-from bs4 import BeautifulSoup
 
 class WebCrawlerSpider(CrawlSpider):
     """Spider for crawling websites and extracting content."""
@@ -12,8 +11,8 @@ class WebCrawlerSpider(CrawlSpider):
     
     def __init__(
         self,
-        table_name: str,
-        model: Any,
+        job_id: str,
+        db,
         start_urls: List[str],
         max_depth: int = 2,
         follow_links: bool = True,
@@ -24,8 +23,8 @@ class WebCrawlerSpider(CrawlSpider):
         self.start_urls = start_urls
         self.max_depth = max_depth
         self.follow_links = follow_links
-        self.table_name = table_name
-        self.model = model
+        self.job_id = job_id
+        self.db = db
 
         # Define crawling rules
         rules = []
@@ -57,15 +56,17 @@ class WebCrawlerSpider(CrawlSpider):
     
     def parse_page(self, response):
         """Parse a webpage and extract content and metadata."""
-        soup = BeautifulSoup(response.text, 'html.parser')
+
         html_content = response.text
         
         # Calculate checksum of HTML content
         html_checksum = hashlib.sha256(html_content.encode()).hexdigest()
+        html_URL_checksum = hashlib.sha256(response.url.encode()).hexdigest()
         
         # Create HTML page entry
         yield {
-            'element_id': response.url,
+            'element_id': f"{html_URL_checksum}_{self.job_id}",
+            'URL': response.url,
             'type': 'URL',
             'content': '',  # Will be set by pipeline after S3 upload
             'checksum': html_checksum,
@@ -75,8 +76,10 @@ class WebCrawlerSpider(CrawlSpider):
         
         # Extract and yield PDFs
         for pdf in self._extract_pdfs(response):
+            pdf_URL_checksum = hashlib.sha256(pdf['url'].encode()).hexdigest()
             yield {
-                'element_id': pdf['url'],
+                'element_id': f"{pdf_URL_checksum}_{self.job_id}",
+                'URL': pdf['url'],
                 'type': 'PDF',
                 'content': '',  # Will be set by pipeline
                 'checksum': '',  # Will be set by pipeline
@@ -86,8 +89,10 @@ class WebCrawlerSpider(CrawlSpider):
         
         # Extract and yield images
         for img in self._extract_images(response):
+            img_URL_checksum = hashlib.sha256(img['url'].encode()).hexdigest()
             yield {
-                'element_id': img['url'],
+                'element_id': f"{img_URL_checksum}_{self.job_id}",
+                'URL': img['url'],
                 'type': 'Image',
                 'content': '',  # Will be set by pipeline
                 'checksum': '',  # Will be set by pipeline
@@ -130,8 +135,8 @@ class WebCrawlerSpider(CrawlSpider):
             start_urls=self.start_urls,
             max_depth=self.max_depth,
             follow_links=self.follow_links,
-            table_name=self.table_name,
-            model=self.model
+            job_id = self.job_id,
+            db = self.db
         )
         
         process.start()
