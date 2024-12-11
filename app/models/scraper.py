@@ -32,12 +32,18 @@ class Scrapy(Base):
         comment="Content type (URL/PDF/Image)"
     )
     
-    content = Column(
+    raw_content_path = Column(
         String,
         nullable=False,
         comment="MinIO URL to raw content"
     )
     
+    processed_content_path = Column(
+        String,
+        nullable=False,
+        comment="MinIO URL to processed content"
+    )
+
     checksum = Column(
         String,
         nullable=False,

@@ -58,9 +58,6 @@ class WebCrawlerSpider(CrawlSpider):
         """Parse a webpage and extract content and metadata."""
 
         html_content = response.text
-        
-        # Calculate checksum of HTML content
-        html_checksum = hashlib.sha256(html_content.encode()).hexdigest()
         html_URL_checksum = hashlib.sha256(response.url.encode()).hexdigest()
         
         # Create HTML page entry
@@ -68,8 +65,9 @@ class WebCrawlerSpider(CrawlSpider):
             'element_id': f"{html_URL_checksum}_{self.job_id}",
             'URL': response.url,
             'type': 'URL',
-            'content': '',  # Will be set by pipeline after S3 upload
-            'checksum': html_checksum,
+            'raw_content_path': '',  # Will be set by pipeline
+            'processed_content_path':'', # Will be set by pipeline
+            'checksum': '',
             'parent_id': None,
             'raw_html': html_content  # For pipeline processing
         }
@@ -81,7 +79,8 @@ class WebCrawlerSpider(CrawlSpider):
                 'element_id': f"{pdf_URL_checksum}_{self.job_id}",
                 'URL': pdf['url'],
                 'type': 'PDF',
-                'content': '',  # Will be set by pipeline
+                'raw_content_path': '',  # Will be set by pipeline
+                'processed_content_path':'', # Will be set by pipeline
                 'checksum': '',  # Will be set by pipeline
                 'parent_id': response.url,
                 'raw_pdf': pdf  # For pipeline processing
@@ -94,22 +93,34 @@ class WebCrawlerSpider(CrawlSpider):
                 'element_id': f"{img_URL_checksum}_{self.job_id}",
                 'URL': img['url'],
                 'type': 'Image',
-                'content': '',  # Will be set by pipeline
+                'raw_content_path': '',  # Will be set by pipeline
+                'processed_content_path':'', # Will be set by pipeline
                 'checksum': '',  # Will be set by pipeline
                 'parent_id': response.url,
-                'raw_image': img  # For pipeline processing
+                'raw_img': img  # For pipeline processing
             }
     
     def _extract_pdfs(self, response) -> List[Dict]:
-        """Extract PDF links."""
+        """Extract PDF links including those with query parameters.
+        
+        Handles PDF URLs in formats like:
+        - direct.pdf
+        - path/file.pdf
+        - file.pdf?parameter=value
+        - file.pdf#section
+        """
         pdfs = []
-        pdf_links = response.css('a[href$=".pdf"]::attr(href)').getall()
+        # Match href containing .pdf anywhere in the string
+        pdf_links = response.css('a[href*=".pdf"]::attr(href)').getall()
         
         for pdf_link in pdf_links:
-            absolute_url = urljoin(response.url, pdf_link)
-            pdfs.append({
-                'url': absolute_url
-            })
+            # Verify this is actually a PDF link (not just containing .pdf somewhere random)
+            if '.pdf' in pdf_link.lower().split('?')[0]:  # Check before any query parameters
+                absolute_url = urljoin(response.url, pdf_link)
+                pdfs.append({
+                    'url': absolute_url
+                })
+        
         return pdfs
     
     def _extract_images(self, response) -> List[Dict]:
