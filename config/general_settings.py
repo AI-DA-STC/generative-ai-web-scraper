@@ -47,3 +47,5 @@ class Settings(BaseSettings, PathInfo):
     LOG_FILE: str = "logs/crawler.log"
     DOWNLOAD_PATH: str = "data/downloads"
     CACHE_PATH: str = "data/cache"
+
+    JINA_API_KEY: str

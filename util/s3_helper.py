@@ -72,6 +72,8 @@ class S3Helper:
         if content_type:
             params['ContentType'] = content_type
         else:
+            mimetypes.add_type('text/markdown', '.md')
+            mimetypes.add_type('text/markdown', '.markdown')
             content_type = mimetypes.guess_type(path)[0]
             if content_type:
                 params['ContentType'] = content_type

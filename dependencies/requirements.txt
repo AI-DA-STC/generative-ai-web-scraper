@@ -9,3 +9,4 @@ boto3
 PyMuPDF
 bs4
 click
+huggingface_hub

@@ -10,7 +10,8 @@ def create_scrapy(db: Session, scrapy_data: ScrapyCreate) -> None :
         element_id=scrapy_data.element_id,
         URL=scrapy_data.URL,
         type=scrapy_data.type,
-        content=scrapy_data.content,
+        raw_content_path=scrapy_data.raw_content_path,
+        processed_content_path=scrapy_data.processed_content_path,
         checksum=scrapy_data.checksum,
         parent_id=scrapy_data.parent_id,
     )
